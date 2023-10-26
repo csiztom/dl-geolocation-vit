@@ -1,4 +1,5 @@
 import io
+import time
 
 import matplotlib
 import numpy as np
@@ -9,6 +10,7 @@ import os
 from shapely import Point, Polygon
 import matplotlib.pyplot as plt
 from PIL import Image
+import concurrent.futures
 
 IMAGE_SIZE = "256x256"
 OUTPUT_DIR = "./streetview_images/"
@@ -18,7 +20,7 @@ def check_street_view_image_existence(api_key, location):
     base_url = "https://maps.googleapis.com/maps/api/streetview/metadata"
     params = {
         "location": location,
-        "radius": 2000,  # Search within # meters of the location
+        "radius": 10000,  # Search within # meters of the location
         "key": api_key
     }
 
@@ -46,10 +48,14 @@ def check_street_view_image_existence(api_key, location):
 
 
 def download_images(api_key, locations):
-    for location in locations:
-        lat, lng = check_street_view_image_existence(api_key, f"{location[0]},{location[1]}")
-        if lat and lng:
-            download_street_view_image(api_key, (lat, lng), IMAGE_SIZE, output_dir=OUTPUT_DIR)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+        executor.map(verify_and_download_image, [api_key] * len(locations), locations)
+
+
+def verify_and_download_image(api_key, location):
+    lat, lng = check_street_view_image_existence(api_key, f"{location[0]},{location[1]}")
+    if lat and lng:
+        download_street_view_image(api_key, (lat, lng), IMAGE_SIZE, output_dir=OUTPUT_DIR)
 
 
 def download_street_view_image(api_key, location, size, heading=0, pitch=0, fov=90, output_dir="./"):
@@ -62,6 +68,7 @@ def download_street_view_image(api_key, location, size, heading=0, pitch=0, fov=
         "heading": heading,
         "pitch": pitch,
         "fov": fov,
+        "return_error_codes": True,
         "key": api_key,
     }
 
@@ -153,10 +160,13 @@ if __name__ == "__main__":
         (55.58086622333195, 9.867314717277736),
         (56.440669583160854, 10.922002017837926),
     ]
-    num_points = 10
+    num_points = 1024
 
     points_within_polygon = generate_points_within_polygon(bounding_coordinates, num_points)
     visualize_generated_locations(points_within_polygon, bounding_coordinates)
     print(points_within_polygon)
 
+    start = time.time()
     download_images(api_key, points_within_polygon)
+    end = time.time()
+    print(f"Time elapsed: {end - start} seconds")
