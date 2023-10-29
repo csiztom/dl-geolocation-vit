@@ -5,4 +5,5 @@ __pycache__
 /visualization.png
 /streetview_images/
 /venv/
+/.idea/
 /.env
