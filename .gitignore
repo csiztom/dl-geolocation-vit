@@ -1,4 +1,6 @@
 data
+images
+.DS_Store
 __pycache__
 /visualization.png
 /streetview_images/
