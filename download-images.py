@@ -7,6 +7,7 @@ import logging
 import matplotlib
 import requests
 from dotenv import load_dotenv
+from threading import Semaphore
 import os
 
 import matplotlib.pyplot as plt
@@ -21,7 +22,7 @@ LOCATIONS_FILE = "./data/locations.json"
 METADATA_DESTINATION = "./data/metadata.json"
 VISUALIZATION_FILE = "./data/visualization.png"
 LOGS_FILE = "./data/logs.log"
-IMAGES_PER_CELL = 2
+IMAGES_PER_CELL = 10
 
 downloaded_images = {}
 collisions = {"exact": 0, "close": 0}
@@ -29,6 +30,8 @@ fails = {"request_failed": 0, "download_failed": 0, "no_image": 0, "no_lat_lng":
 
 load_dotenv()
 api_key = os.getenv("API_KEY")
+
+semaphore = Semaphore()
 
 
 def main():
@@ -61,7 +64,7 @@ def main():
 
     # Count number of downloaded images in each cell
     downloaded_images_per_cell = {}
-    for image in downloaded_images:
+    for image in downloaded_images.values():
         cell = image["cell"]
         if not downloaded_images_per_cell.get(cell):
             downloaded_images_per_cell[cell] = 0
@@ -107,6 +110,7 @@ def load_locations_from_file(file_path):
         locations[cell_name]["cities"][city]["count"] += 1
 
     sampled_locations = {}
+    total_locations = 0
     for cell_name in locations:
         cell_count = locations[cell_name]["count"]
         sampled_locations[cell_name] = []
@@ -115,13 +119,14 @@ def load_locations_from_file(file_path):
             city_count = locations[cell_name]["cities"][city]["count"]
             ratio = city_count / cell_count
             city_locations = locations[cell_name]["cities"][city]["locations"]
-            # logging.info(f"{cell_name} - {city}: {city_count} locations")
             number_of_locations_to_sample = min(max(round(ratio * IMAGES_PER_CELL), 1), city_count)
-            # logging.info(f"{cell_name} - {city}: {number_of_locations_to_sample}/{city_count} locations")
             sampled_locations[cell_name] += sample_locations(city_locations, number_of_locations_to_sample)
             sampled_location_count += number_of_locations_to_sample
+
+        total_locations += sampled_location_count
         logging.info(f"{cell_name}: {sampled_location_count} locations sampled")
 
+    logging.info(f"Total locations sampled: {total_locations}")
     return sampled_locations
 
 
@@ -167,29 +172,51 @@ def visualize_generated_locations(points, polygon=None):
 
 
 def download_images(locations, output_dir):
-    with concurrent.futures.ThreadPoolExecutor(max_workers=THREADS) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(THREADS, len(locations))) as executor:
         executor.map(verify_and_download_image, locations, [output_dir] * len(locations))
 
 
 def verify_and_download_image(location, output_dir):
     lat, lng, pano_id = check_street_view_image_existence(lat_lng_to_string(location['lat'], location['lng']))
     if lat and lng:
-        key = f"{round(lat, COORDINATES_PRECISION)},{round(lng, COORDINATES_PRECISION)}"
-        if key not in downloaded_images:
-            if download_street_view_image(lat, lng, IMAGE_SIZE, 0, output_dir):
-                downloaded_images[key] = {
-                    "lat": lat,
-                    "lng": lng,
-                    "pano_id": pano_id,
-                    "heading": 0,
-                    "cell": location['cell']
-                }
+        semaphore.acquire()
+        if is_collision(lat, lng, location['cell']):
+            semaphore.release()
+            return
+
+        semaphore.release()
+
+        if download_street_view_image(lat, lng, IMAGE_SIZE, 0, output_dir):
+            key = lat_lng_to_string(lat, lng)
+            semaphore.acquire()
+            if is_collision(lat, lng, location['cell']):
+                semaphore.release()
+                logging.warning(f"Image already downloaded {location['cell']}: lat={lat}, lng={lng}, pano_id={pano_id}")
+                return
+            downloaded_images[key] = {
+                "lat": lat,
+                "lng": lng,
+                "pano_id": pano_id,
+                "heading": 0,
+                "cell": location['cell']
+            }
+            semaphore.release()
+
+
+def is_collision(lat, lng, cell_name):
+    """
+    Check if an image for the given location already exists
+    """
+    key = lat_lng_to_string(lat, lng)
+    if key in downloaded_images:
+        if downloaded_images[key]["lat"] == lat and downloaded_images[key]["lng"] == lng:
+            collisions["exact"] += 1
         else:
-            if downloaded_images[key]["lat"] == lat and downloaded_images[key]["lng"] == lng:
-                collisions["exact"] += 1
-            else:
-                collisions["close"] += 1
-            logging.warning(f"Image for {key} already downloaded ({downloaded_images[key]}); new image: lat={lat}, lng={lng}, cell={location['cell']}")
+            collisions["close"] += 1
+        logging.warning(
+            f"Image for {key} already downloaded ({downloaded_images[key]}); new image: lat={lat}, lng={lng}, cell={cell_name}")
+        return True
+    return False
 
 
 def check_street_view_image_existence(location):
@@ -253,12 +280,18 @@ def download_street_view_image(lat, lng, size, heading=0, output_dir="./"):
         return True
     else:
         logging.warning(f"Image download failed. Status code {response.status_code} url: {response.url}")
+        semaphore.acquire()
         fails["download_failed"] += 1
+        semaphore.release()
         return False
 
 
 def lat_lng_to_string(lat, lng):
     return f"{lat},{lng}"
+
+
+def lat_lng_to_key(lat, lng):
+    return f"{round(lat, COORDINATES_PRECISION)},{round(lng, COORDINATES_PRECISION)}"
 
 
 def save_metadata(output_file):
