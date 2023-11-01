@@ -20,21 +20,7 @@ OUTPUT_DIR = "./streetview_images/"
 LOCATIONS_FILE = "./data/locations.json"
 METADATA_DESTINATION = "./data/metadata.json"
 LOGS_FILE = "./data/logs.log"
-IMAGES_PER_CELL = 2
-# Set None to process all locations
-CHOSEN_CELLS = [
-    "Randers Kommune",
-    "Silkeborg Kommune",
-    "Horsens Kommune",
-    "Gladsaxe Kommune",
-    "Roskilde Kommune",
-    "Kalundborg Kommune",
-    "Esbjerg Kommune",
-    "Kolding Kommune",
-    "Slagelse Kommune",
-    "Gentofte Kommune"
-]
-# CHOSEN_CELLS = None
+IMAGES_PER_CELL = 10
 
 downloaded_images = {}
 collisions = {"exact": 0, "close": 0}
@@ -79,48 +65,63 @@ def load_locations_from_file(file_path):
     [
         {
             "location": [
-                9.0617879,
-                55.1878028
-            ],
-            "municipality": "T\u00f8nder Kommune"
-        },
-        {
-            "location": [
                 10.0307112,
                 55.9739344
             ],
-            "municipality": "Odder Kommune"
+            "municipality": "Odder Kommune",
+            "city": "Odder C"
         },
         ...
     ]
-
-    Result:
-    [
-        "Kommune_Name": [
-            (56.156767293273234, 10.168922740310927),
-            (56.10563022646918, 10.168311008571386),
-        ]
-        ...
     """
     with open(file_path, 'r') as f:
         data = json.load(f)
     locations = {}
     for item in data:
         cell_name = item['municipality']
+        city = item['city']
         if not cell_name:
             continue  # Skip if no municipality
-        if CHOSEN_CELLS and cell_name not in CHOSEN_CELLS:
-            continue
         location = {"cell": cell_name, "lat": item['location'][1], "lng": item['location'][0]}
-        if cell_name in locations:
-            if len(locations[cell_name]) >= IMAGES_PER_CELL:
-                continue
-            locations[cell_name].append(location)
-        else:
-            locations[cell_name] = [location]
+        if not locations.get(cell_name):
+            locations[cell_name] = {"cities": {}, "count": 0}
+        if not locations[cell_name]["cities"].get(city):
+            locations[cell_name]["cities"][city] = {"locations": [], "count": 0}
+
+        locations[cell_name]["cities"][city]["locations"].append(location)
+        locations[cell_name]["count"] += 1
+        locations[cell_name]["cities"][city]["count"] += 1
+
+    sampled_locations = {}
     for cell_name in locations:
-        logging.info(f"{cell_name}: {len(locations[cell_name])} locations")
-    return locations
+        cell_count = locations[cell_name]["count"]
+        sampled_locations[cell_name] = []
+        sampled_location_count = 0
+        for city in locations[cell_name]["cities"]:
+            city_count = locations[cell_name]["cities"][city]["count"]
+            ratio = city_count / cell_count
+            city_locations = locations[cell_name]["cities"][city]["locations"]
+            # logging.info(f"{cell_name} - {city}: {city_count} locations")
+            number_of_locations_to_sample = max(round(ratio * IMAGES_PER_CELL), 1)
+            # logging.info(f"{cell_name} - {city}: {number_of_locations_to_sample}/{city_count} locations")
+            sampled_locations[cell_name] += sample_locations(city_locations, number_of_locations_to_sample)
+            sampled_location_count += number_of_locations_to_sample
+        logging.info(f"{cell_name}: {sampled_location_count} locations sampled")
+
+    return sampled_locations
+
+
+def sample_locations(locations, number_of_locations_to_sample):
+    """
+    Uniformly sample locations from a list of locations
+    """
+    if number_of_locations_to_sample >= len(locations):
+        return locations
+    sampled_locations = []
+    step = len(locations) / number_of_locations_to_sample
+    for i in range(number_of_locations_to_sample):
+        sampled_locations.append(locations[int(i * step)])
+    return sampled_locations
 
 
 def visualize_generated_locations(points, polygon=None):
@@ -131,7 +132,7 @@ def visualize_generated_locations(points, polygon=None):
 
     # Create a plot to visualize the points and the polygon
     plt.figure(figsize=(8, 6))
-    plt.scatter(x, y, c='blue', label='Images locations')
+    plt.scatter(x, y, c='blue', s=0.1, label='Images locations')
     if polygon:
         y_polygon = [point[0] for point in polygon]
         x_polygon = [point[1] for point in polygon]
