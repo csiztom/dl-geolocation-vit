@@ -15,14 +15,14 @@ from PIL import Image
 import concurrent.futures
 
 THREADS = 32
-IMAGE_SIZE = "224x224"
+IMAGE_SIZE = "224x246"
 COORDINATES_PRECISION = 5  # Number of decimals to keep for the coordinates. 5 decimals is about 1 meter precision
 OUTPUT_DIR = "./streetview_images/"
 LOCATIONS_FILE = "./data/locations.json"
 METADATA_DESTINATION = "./data/metadata.json"
 VISUALIZATION_FILE = "./data/visualization.png"
 LOGS_FILE = "./data/logs.log"
-IMAGES_PER_CELL = 10
+IMAGES_PER_CELL = 170
 
 downloaded_images = {}
 collisions = {"exact": 0, "close": 0}
