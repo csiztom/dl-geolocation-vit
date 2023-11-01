@@ -20,7 +20,7 @@ OUTPUT_DIR = "./streetview_images/"
 LOCATIONS_FILE = "./data/locations.json"
 METADATA_DESTINATION = "./data/metadata.json"
 LOGS_FILE = "./data/logs.log"
-IMAGES_PER_CELL = 50
+IMAGES_PER_CELL = 2
 # Set None to process all locations
 CHOSEN_CELLS = [
     "Randers Kommune",
@@ -53,7 +53,7 @@ def main():
     load_dotenv()
     api_key = os.getenv("API_KEY")
 
-    locations = load_locations_from_file('locations.json')
+    locations = load_locations_from_file(LOCATIONS_FILE)
 
     visualize_generated_locations(
         [(location["lat"], location["lng"]) for cell in locations.values() for location in cell]
@@ -160,14 +160,14 @@ def verify_and_download_image(api_key, location, output_dir):
     if lat and lng:
         key = f"{round(lat, COORDINATES_PRECISION)},{round(lng, COORDINATES_PRECISION)}"
         if key not in downloaded_images:
-            # if download_street_view_image(api_key, lat, lng, IMAGE_SIZE, 0, output_dir):
-            downloaded_images[key] = {
-                "lat": lat,
-                "lng": lng,
-                "pano_id": pano_id,
-                "heading": 0,
-                "cell": location['cell']
-            }
+            if download_street_view_image(api_key, lat, lng, IMAGE_SIZE, 0, output_dir):
+                downloaded_images[key] = {
+                    "lat": lat,
+                    "lng": lng,
+                    "pano_id": pano_id,
+                    "heading": 0,
+                    "cell": location['cell']
+                }
         else:
             if downloaded_images[key]["lat"] == lat and downloaded_images[key]["lng"] == lng:
                 collisions["exact"] += 1
@@ -230,7 +230,7 @@ def download_street_view_image(api_key, lat, lng, size, heading=0, output_dir=".
     if response.status_code == 200:
         # Create a filename for the saved image
         filename = lat_lng_to_string(lat, lng)
-        filepath = os.path.join(output_dir, filename)
+        filepath = os.path.join(output_dir, filename + ".jpg")
 
         # Save the image to the specified directory
         with open(filepath, "wb") as f:
