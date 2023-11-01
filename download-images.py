@@ -19,12 +19,16 @@ COORDINATES_PRECISION = 5  # Number of decimals to keep for the coordinates. 5 d
 OUTPUT_DIR = "./streetview_images/"
 LOCATIONS_FILE = "./data/locations.json"
 METADATA_DESTINATION = "./data/metadata.json"
+VISUALIZATION_FILE = "./data/visualization.png"
 LOGS_FILE = "./data/logs.log"
-IMAGES_PER_CELL = 10
+IMAGES_PER_CELL = 2
 
 downloaded_images = {}
 collisions = {"exact": 0, "close": 0}
 fails = {"request_failed": 0, "download_failed": 0, "no_image": 0, "no_lat_lng": 0}
+
+load_dotenv()
+api_key = os.getenv("API_KEY")
 
 
 def main():
@@ -35,9 +39,6 @@ def main():
     )
 
     logging.info('Download images started')
-
-    load_dotenv()
-    api_key = os.getenv("API_KEY")
 
     locations = load_locations_from_file(LOCATIONS_FILE)
 
@@ -50,13 +51,26 @@ def main():
         logging.info(f"Downloading images for {cell_name}...")
         output_dir = os.path.join(OUTPUT_DIR, cell_name)
         os.makedirs(output_dir, exist_ok=True)
-        download_images(api_key, locations, output_dir)
+        download_images(locations, output_dir)
     end = time.time()
     logging.info(f"Images downloaded in {end - start} seconds")
     logging.info(f"Downloaded images: {len(downloaded_images)}")
     logging.info(f"Collisions: {collisions}")
     logging.info(f"Fails: {fails}")
     save_metadata(METADATA_DESTINATION)
+
+    # Count number of downloaded images in each cell
+    downloaded_images_per_cell = {}
+    for image in downloaded_images:
+        cell = image["cell"]
+        if not downloaded_images_per_cell.get(cell):
+            downloaded_images_per_cell[cell] = 0
+        downloaded_images_per_cell[cell] += 1
+
+    # Print number of downloaded images in each cell
+    logging.info("Number of downloaded images in each cell:")
+    for cell in downloaded_images_per_cell:
+        logging.info(f"{cell}: {downloaded_images_per_cell[cell]}")
 
 
 def load_locations_from_file(file_path):
@@ -102,7 +116,7 @@ def load_locations_from_file(file_path):
             ratio = city_count / cell_count
             city_locations = locations[cell_name]["cities"][city]["locations"]
             # logging.info(f"{cell_name} - {city}: {city_count} locations")
-            number_of_locations_to_sample = max(round(ratio * IMAGES_PER_CELL), 1)
+            number_of_locations_to_sample = min(max(round(ratio * IMAGES_PER_CELL), 1), city_count)
             # logging.info(f"{cell_name} - {city}: {number_of_locations_to_sample}/{city_count} locations")
             sampled_locations[cell_name] += sample_locations(city_locations, number_of_locations_to_sample)
             sampled_location_count += number_of_locations_to_sample
@@ -131,8 +145,8 @@ def visualize_generated_locations(points, polygon=None):
     x = [point[1] for point in points]  # Extract the y coordinate from the tuple
 
     # Create a plot to visualize the points and the polygon
-    plt.figure(figsize=(8, 6))
-    plt.scatter(x, y, c='blue', s=0.1, label='Images locations')
+    plt.figure(figsize=(16, 12))
+    plt.scatter(x, y, c='blue', s=1, alpha=0.1, label='Images locations')
     if polygon:
         y_polygon = [point[0] for point in polygon]
         x_polygon = [point[1] for point in polygon]
@@ -148,20 +162,21 @@ def visualize_generated_locations(points, polygon=None):
 
     # Display the saved figure
     Image.open(fig_io).show()
+    # Save to file
+    plt.savefig(VISUALIZATION_FILE, format='png', dpi=300)
 
 
-def download_images(api_key, locations, output_dir):
+def download_images(locations, output_dir):
     with concurrent.futures.ThreadPoolExecutor(max_workers=THREADS) as executor:
-        executor.map(verify_and_download_image, [api_key] * len(locations), locations,
-                     [output_dir] * len(locations))
+        executor.map(verify_and_download_image, locations, [output_dir] * len(locations))
 
 
-def verify_and_download_image(api_key, location, output_dir):
-    lat, lng, pano_id = check_street_view_image_existence(api_key, lat_lng_to_string(location['lat'], location['lng']))
+def verify_and_download_image(location, output_dir):
+    lat, lng, pano_id = check_street_view_image_existence(lat_lng_to_string(location['lat'], location['lng']))
     if lat and lng:
         key = f"{round(lat, COORDINATES_PRECISION)},{round(lng, COORDINATES_PRECISION)}"
         if key not in downloaded_images:
-            if download_street_view_image(api_key, lat, lng, IMAGE_SIZE, 0, output_dir):
+            if download_street_view_image(lat, lng, IMAGE_SIZE, 0, output_dir):
                 downloaded_images[key] = {
                     "lat": lat,
                     "lng": lng,
@@ -177,15 +192,14 @@ def verify_and_download_image(api_key, location, output_dir):
             logging.warning(f"Image for {key} already downloaded ({downloaded_images[key]}); new image: lat={lat}, lng={lng}, cell={location['cell']}")
 
 
-def check_street_view_image_existence(api_key, location):
+def check_street_view_image_existence(location):
     base_url = "https://maps.googleapis.com/maps/api/streetview/metadata"
     params = {
         "location": location,
         "radius": 100,  # Search within # meters of the location
-        "key": api_key
+        "key": api_key,
     }
 
-    # Make the API request to retrieve metadata
     response = requests.get(base_url, params=params)
 
     if response.status_code == 200:
@@ -211,7 +225,7 @@ def check_street_view_image_existence(api_key, location):
     return None, None, None  # Request was not successful or failed
 
 
-def download_street_view_image(api_key, lat, lng, size, heading=0, output_dir="./"):
+def download_street_view_image(lat, lng, size, heading=0, output_dir="./"):
     base_url = "https://maps.googleapis.com/maps/api/streetview"
 
     # Define the parameters for the request
