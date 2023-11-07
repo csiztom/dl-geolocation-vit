@@ -1,5 +1,8 @@
 data
 images
+images_cropped
+streetview_images_cropped
+streetview_images
 .DS_Store
 vit-base-patch16-224-in21k
 __pycache__
