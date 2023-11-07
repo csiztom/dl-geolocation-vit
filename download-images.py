@@ -97,7 +97,7 @@ def load_locations_from_file(file_path):
     for item in data:
         cell_name = item['municipality']
         city = item['city']
-        if not cell_name:
+        if not cell_name or cell_name == "None":
             continue  # Skip if no municipality
         location = {"cell": cell_name, "lat": item['location'][1], "lng": item['location'][0]}
         if not locations.get(cell_name):
@@ -223,7 +223,6 @@ def check_street_view_image_existence(location):
     base_url = "https://maps.googleapis.com/maps/api/streetview/metadata"
     params = {
         "location": location,
-        "radius": 100,  # Search within # meters of the location
         "key": api_key,
     }
 
@@ -263,7 +262,7 @@ def download_street_view_image(lat, lng, size, heading=0, output_dir="./"):
         "pitch": 0,
         "fov": 90,
         "source": "outdoor",
-        "return_error_codes": True,
+        "return_error_code": True,
         "key": api_key,
     }
 
