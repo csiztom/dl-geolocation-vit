@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import concurrent.futures
 
-THREADS = 32
+THREADS = 1
 IMAGE_SIZE = "224x246"
 COORDINATES_PRECISION = 5  # Number of decimals to keep for the coordinates. 5 decimals is about 1 meter precision
 OUTPUT_DIR = "./streetview_images/"
@@ -22,7 +22,10 @@ LOCATIONS_FILE = "./data/locations.json"
 METADATA_DESTINATION = "./data/metadata.json"
 VISUALIZATION_FILE = "./data/visualization.png"
 LOGS_FILE = "./data/logs.log"
-IMAGES_PER_CELL = 170
+IMAGES_PER_CELL = 1000
+CELLS = [
+    "Samsø Kommune"
+]
 
 downloaded_images = {}
 collisions = {"exact": 0, "close": 0}
@@ -91,6 +94,27 @@ def load_locations_from_file(file_path):
         ...
     ]
     """
+    # Load existing images from metadata file
+    global downloaded_images
+    with open(METADATA_DESTINATION, 'r') as f:
+        downloaded_images = json.load(f)
+    # images to download per cell considering existing images
+    existing_images_in_cells = {}
+    for image in downloaded_images.values():
+        cell = image["cell"]
+        if not existing_images_in_cells.get(cell):
+            existing_images_in_cells[cell] = 0
+        existing_images_in_cells[cell] += 1
+
+    target_images_per_cell = {}
+    for cell in existing_images_in_cells:
+        target_images_per_cell[cell] = IMAGES_PER_CELL - existing_images_in_cells[cell]
+        if target_images_per_cell[cell] < 10:
+            target_images_per_cell[cell] = 0
+            continue
+        target_images_per_cell[cell] = max(round((IMAGES_PER_CELL - existing_images_in_cells[cell]) * 1.8), 0)
+        logging.info(f"Target images for {cell}: {target_images_per_cell[cell]}")
+
     with open(file_path, 'r') as f:
         data = json.load(f)
     locations = {}
@@ -100,6 +124,9 @@ def load_locations_from_file(file_path):
         if not cell_name or cell_name == "None":
             continue  # Skip if no municipality
         location = {"cell": cell_name, "lat": item['location'][1], "lng": item['location'][0]}
+        key = lat_lng_to_key(location["lat"], location["lng"])
+        if key in downloaded_images:
+            continue  # Skip if image already downloaded
         if not locations.get(cell_name):
             locations[cell_name] = {"cities": {}, "count": 0}
         if not locations[cell_name]["cities"].get(city):
@@ -112,19 +139,24 @@ def load_locations_from_file(file_path):
     sampled_locations = {}
     total_locations = 0
     for cell_name in locations:
+        if cell_name not in CELLS:
+            continue
         cell_count = locations[cell_name]["count"]
         sampled_locations[cell_name] = []
         sampled_location_count = 0
+        images_to_sample = target_images_per_cell[cell_name]
+        if images_to_sample == 0:
+            continue
         for city in locations[cell_name]["cities"]:
             city_count = locations[cell_name]["cities"][city]["count"]
             ratio = city_count / cell_count
             city_locations = locations[cell_name]["cities"][city]["locations"]
-            number_of_locations_to_sample = min(max(round(ratio * IMAGES_PER_CELL), 1), city_count)
+            number_of_locations_to_sample = min(max(round(ratio * images_to_sample), 1), city_count)
             sampled_locations[cell_name] += sample_locations(city_locations, number_of_locations_to_sample)
             sampled_location_count += number_of_locations_to_sample
 
         total_locations += sampled_location_count
-        logging.info(f"{cell_name}: {sampled_location_count} locations sampled")
+        logging.info(f"{cell_name}: {sampled_location_count} ({images_to_sample}) locations sampled")
 
     logging.info(f"Total locations sampled: {total_locations}")
     return sampled_locations
@@ -172,6 +204,9 @@ def visualize_generated_locations(points, polygon=None):
 
 
 def download_images(locations, output_dir):
+    if len(locations) == 0:
+        logging.info("No images to download")
+        return
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(THREADS, len(locations))) as executor:
         executor.map(verify_and_download_image, locations, [output_dir] * len(locations))
 
@@ -187,7 +222,7 @@ def verify_and_download_image(location, output_dir):
         semaphore.release()
 
         if download_street_view_image(lat, lng, IMAGE_SIZE, 0, output_dir):
-            key = lat_lng_to_string(lat, lng)
+            key = lat_lng_to_key(lat, lng)
             semaphore.acquire()
             if is_collision(lat, lng, location['cell']):
                 semaphore.release()
@@ -207,7 +242,7 @@ def is_collision(lat, lng, cell_name):
     """
     Check if an image for the given location already exists
     """
-    key = lat_lng_to_string(lat, lng)
+    key = lat_lng_to_key(lat, lng)
     if key in downloaded_images:
         if downloaded_images[key]["lat"] == lat and downloaded_images[key]["lng"] == lng:
             collisions["exact"] += 1
@@ -223,10 +258,12 @@ def check_street_view_image_existence(location):
     base_url = "https://maps.googleapis.com/maps/api/streetview/metadata"
     params = {
         "location": location,
+        "radius": 150,
         "key": api_key,
     }
 
     response = requests.get(base_url, params=params)
+    logging.info(f"Request: {response.url}")
 
     if response.status_code == 200:
         metadata = response.json()
@@ -262,7 +299,7 @@ def download_street_view_image(lat, lng, size, heading=0, output_dir="./"):
         "pitch": 0,
         "fov": 90,
         "source": "outdoor",
-        "return_error_code": True,
+        "return_error_code": "true",
         "key": api_key,
     }
 
@@ -297,7 +334,7 @@ def save_metadata(output_file):
     # Create the output directory if it does not exist
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     with open(os.path.join(output_file), 'w') as f:
-        json.dump(downloaded_images, f)
+        json.dump(downloaded_images, f, indent=4)
 
 
 if __name__ == "__main__":
