@@ -4,10 +4,8 @@ Deletes images saying "Sorry, we have no imagery here" and updates the metadata 
 import json
 import os
 import shutil
-import cv2
 
 # Path to the downloaded images
-import numpy
 
 METADATA_DESTINATION = "./data/metadata.json"
 IMAGES_PATH = 'streetview_images/'
