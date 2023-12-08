@@ -1,4 +1,4 @@
-#Image Geo-Location with Visual Transformers
+# Image Geo-Location with Visual Transformers
 
 This is our project repository of the assignment for Deep Learning for Visual Recognition (2023 fall).
 
